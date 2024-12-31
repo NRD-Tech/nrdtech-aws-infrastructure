@@ -1,6 +1,7 @@
 # locals {
-#   database_name = "<your database name>"
+#   database_name = "<my database name>"
 #   publicly_accessible = true
+#   subnet_ids = data.aws_subnets.public.ids
 # }
 
 # variable "rds_postgres_serverless_master_password" {
@@ -8,16 +9,16 @@
 # }
 
 # # Create an Aurora DB cluster
-# resource "aws_rds_cluster" "aurora_cluster" {
+# resource "aws_rds_cluster" "aurora_cluster_1" {
 #   cluster_identifier      = "${var.app_ident}-cluster-1"
 #   engine                  = "aurora-postgresql"
 #   engine_mode             = "provisioned"
 #   engine_version          = "16.2"
-#   vpc_security_group_ids  = [aws_security_group.aurora_sg.id]
-#   database_name           = locals.database_name
+#   vpc_security_group_ids  = [aws_security_group.aurora_sg_1.id]
+#   database_name           = local.database_name
 #   master_username         = "dbadmin"
 #   master_password         = var.rds_postgres_serverless_master_password
-#   db_subnet_group_name    = aws_db_subnet_group.aurora_subnet_group.name
+#   db_subnet_group_name    = aws_db_subnet_group.aurora_subnet_group_1.name
 #   skip_final_snapshot     = false
 #   backup_retention_period = var.environment == "prod" ? 5 : 1
 #   deletion_protection = true
@@ -29,7 +30,7 @@
 #   }
 # }
 
-# resource "aws_security_group" "aurora_sg" {
+# resource "aws_security_group" "aurora_sg_1" {
 #   name        = "${var.app_ident}-aurora-sg"
 #   vpc_id      = data.aws_vpc.selected.id
 
@@ -41,6 +42,7 @@
 #     protocol    = "tcp"
 #     cidr_blocks = [
 #         data.aws_vpc.selected.cidr_block, # Internally ip's for our VPC
+#         "136.33.196.235/32", # Nic Home
 #         # "1.2.3.4/32", # Some Developer's IP
 #     ]
 #   }
@@ -59,9 +61,9 @@
 #   }
 # }
 
-# resource "aws_db_subnet_group" "aurora_subnet_group" {
+# resource "aws_db_subnet_group" "aurora_subnet_group_1" {
 #   name       = "${var.app_ident}-aurora-subnet-group"
-#   subnet_ids = data.aws_subnets.subnets.ids
+#   subnet_ids = local.subnet_ids
 
 #   tags = {
 #     Name        = "${var.app_ident}-aurora-subnet-group"
@@ -70,11 +72,19 @@
 # }
 
 # # Create an instance within the cluster
-# resource "aws_rds_cluster_instance" "aurora_instance" {
+# resource "aws_rds_cluster_instance" "aurora_instance_1" {
 #   identifier         = "${var.app_ident}-instance-1"
-#   cluster_identifier = aws_rds_cluster.aurora_cluster.id
+#   cluster_identifier = aws_rds_cluster.aurora_cluster_1.id
 #   instance_class     = "db.serverless"
-#   engine             = aws_rds_cluster.aurora_cluster.engine
-#   engine_version     = aws_rds_cluster.aurora_cluster.engine_version
-#   publicly_accessible = locals.publicly_accessible
+#   engine             = aws_rds_cluster.aurora_cluster_1.engine
+#   engine_version     = aws_rds_cluster.aurora_cluster_1.engine_version
+#   publicly_accessible = local.publicly_accessible
+# }
+
+# output "rds_postgres_serverless_endpoint_1" {
+#   value = aws_rds_cluster.aurora_cluster_1.endpoint
+# }
+
+# output "rds_postgres_serverless_reader_endpoint_1" {
+#   value = aws_rds_cluster.aurora_cluster_1.reader_endpoint
 # }

@@ -13,7 +13,7 @@
 #   }
 
 #   security_group_ids = [aws_security_group.redis_sg_1.id]
-#   subnet_ids         = data.aws_subnets.private.ids
+#   subnet_ids         = slice(data.aws_subnets.all.ids, 0, 3)
 # }
 
 # resource "aws_security_group" "redis_sg_1" {
@@ -35,14 +35,14 @@
 #   }
 # }
 
-# output "redis_host-1" {
+# output "redis_host_1" {
 #   value = aws_elasticache_serverless_cache.redis_1.endpoint[0].address
 # }
 
-# output "redis_port-1" {
+# output "redis_port_1" {
 #   value = aws_elasticache_serverless_cache.redis_1.endpoint[0].port
 # }
 
-# output "redis_sg_id-1" {
-#   value = aws_security_group.redis_sg.id
+# output "redis_sg_id_1" {
+#   value = aws_security_group.redis_sg_1.id
 # }

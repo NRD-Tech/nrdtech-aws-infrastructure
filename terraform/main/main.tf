@@ -2,7 +2,7 @@ terraform {
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = "~> 4.0"
+      version = "~> 5.81.0"
     }
   }
 }
@@ -23,18 +23,30 @@ provider "aws" {
   }
 }
 
+module "prod_resources" {
+  source = "./prod"
+  count  = var.environment == "prod" ? 1 : 0
+  vpc_id = data.aws_vpc.selected.id
+  private_subnet_ids = data.aws_subnets.private.ids
+  public_subnet_ids = data.aws_subnets.public.ids
+  app_ident = var.app_ident
+
+  providers = {
+    aws         = aws        # Default provider
+    aws.useast1 = aws.useast1 # Aliased provider
+  }
+}
+
 data "aws_region" "current" {}
 data "aws_caller_identity" "current" {}
 
 #############################
 # Default VPC
-# NOTE: You must configure your subnets to have names that include
-#       "private" and "public" so the correct subnets can be identified
 #############################
 data "aws_vpc" "selected" {
   default = true
 }
-data "aws_subnets" "subnets" {
+data "aws_subnets" "all" {
   filter {
     name   = "vpc-id"
     values = [data.aws_vpc.selected.id]
@@ -63,17 +75,15 @@ data "aws_subnets" "private" {
 
 #############################
 # Custom VPC
-# NOTE: You must configure your subnets to have names that include
-#       "private" and "public" so the correct subnets can be identified
 #############################
 # VPC
-# locals {
-#   vpc_name = "<my custom vpc name>"
+# variable "vpc_name" {
+#   type = string
 # }
 # data "aws_vpc" "selected" {
 #   filter {
 #     name   = "tag:Name"
-#     values = [locals.vpc_name]
+#     values = [var.vpc_name]
 #   }
 # }
 # 
@@ -94,17 +104,3 @@ data "aws_subnets" "private" {
 #   }
 # }
 #######################################
-
-module "prod_resources" {
-  source = "./prod"
-  count  = var.environment == "prod" ? 1 : 0
-  vpc_id = data.aws_vpc.selected.id
-  private_subnet_ids = data.aws_subnets.private.ids
-  public_subnet_ids = data.aws_subnets.public.ids
-  app_ident = var.app_ident
-
-  providers = {
-    aws        = aws        # Default provider
-    aws.useast1 = aws.useast1 # Aliased provider
-  }
-}

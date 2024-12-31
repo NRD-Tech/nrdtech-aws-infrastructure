@@ -1,4 +1,4 @@
-# Core AWS Infrastructure
+# Shared AWS Infrastructure
 This project defines AWS elements that are shared across multiple AWS projects.
 
 # Technology Stack
