@@ -47,6 +47,7 @@ git commit -m 'init'
   * Each config is a little different per application but at a minimum you will need to change:
     * APP_IDENT
     * TERRAFORM_STATE_BUCKET
+    * AWS_DEFAULT_REGION
 * Edit the terraform/*.tf files and un-comment the infrastructure parts that you want.
   * By default everything is commented out so you don't create things you don't need
 * Commit your changes to git
