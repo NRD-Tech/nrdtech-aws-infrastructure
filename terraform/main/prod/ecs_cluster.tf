@@ -9,8 +9,18 @@
 #   max_num_servers = 2
 # }
 
+# resource "aws_ecs_account_setting_default" "container_insights" {
+#   name  = "containerInsights"
+#   value = "enhanced"
+# }
+
 # resource "aws_ecs_cluster" "ecs_cluster_1" {
 #   name = "${var.app_ident}-ecs-cluster-1"
+
+#   setting {
+#     name  = "containerInsights"
+#     value = "enhanced"
+#   }
 # }
 
 # output "ecs_cluster_1" {
