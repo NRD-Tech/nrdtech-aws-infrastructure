@@ -2,6 +2,7 @@
 #   database_name = "<my database name>"
 #   publicly_accessible = true
 #   subnet_ids = data.aws_subnets.public.ids
+#   skip_final_snapshot = false
 # }
 
 # variable "rds_postgres_serverless_master_password" {
@@ -19,7 +20,8 @@
 #   master_username         = "dbadmin"
 #   master_password         = var.rds_postgres_serverless_master_password
 #   db_subnet_group_name    = aws_db_subnet_group.aurora_subnet_group_1.name
-#   skip_final_snapshot     = false
+#   skip_final_snapshot     = local.skip_final_snapshot
+#   final_snapshot_identifier = local.skip_final_snapshot ? null : "${var.app_ident}-final-snapshot"
 #   backup_retention_period = var.environment == "prod" ? 5 : 1
 #   deletion_protection = true
 #   storage_encrypted = true
