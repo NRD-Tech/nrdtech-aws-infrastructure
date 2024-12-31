@@ -8,7 +8,7 @@ This project defines AWS elements that are shared across multiple AWS projects.
 # Using this Template
 
 ## Clone and Clean the template (if using GitHub)
-* Navigate to: https://github.com/NRD-Tech/nrdtech-python-aws-lambda.git
+* Navigate to: https://github.com/NRD-Tech/nrdtech-aws-infrastructure
 * Log into your GitHub account (otherwise the "Use this template" option will not show up)
 * Click "Use this template" in the top right corner
   * Create a new repository
@@ -18,7 +18,7 @@ This project defines AWS elements that are shared across multiple AWS projects.
 
 ## Clone and Clean the template (if NOT using GitHub)
 ```
-git clone https://github.com/NRD-Tech/nrdtech-python-aws-lambda.git my-project
+git clone https://github.com/NRD-Tech/nrdtech-aws-infrastructure.git my-project
 cd my-project
 rm -fR .git venv .idea
 git init
