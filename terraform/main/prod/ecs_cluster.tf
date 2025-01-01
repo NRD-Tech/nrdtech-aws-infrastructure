@@ -1,14 +1,3 @@
-# locals {
-#   # (Optional) Config for EC2 Capacity
-#   # NOTE: You only need these if you are enabling the allocation of EC2 servers to your cluster
-#   #       if you don't do that you can still use Fargate
-#   ec2_instance_type = "t3.large"
-#   ec2_key_name = "<your ssh key name>"
-#   subnet_ids = var.private_subnet_ids  # or var.public_subnet_ids
-#   min_num_servers = 1
-#   max_num_servers = 2
-# }
-
 # resource "aws_ecs_account_setting_default" "container_insights" {
 #   name  = "containerInsights"
 #   value = "enhanced"
@@ -31,12 +20,28 @@
 # # Enable the below resources if you want EC2 Capacity in addition to Fargate
 # #############################################################################################
 
+# variable "ec2_key_name" {
+#   description = "The name of the EC2 key pair to use. If not specified, a new key pair will be created."
+#   default     = ""
+# }
+
+# locals {
+#   # (Optional) Config for EC2 Capacity
+#   # NOTE: You only need these if you are enabling the allocation of EC2 servers to your cluster
+#   #       if you don't do that you can still use Fargate
+#   ec2_instance_type = "t3.large"
+#   ec2_key_name      = var.ec2_key_name != "" ? var.ec2_key_name : aws_key_pair.generated_key[0].key_name
+#   subnet_ids        = var.private_subnet_ids  # or var.public_subnet_ids
+#   min_num_servers   = 1
+#   max_num_servers   = 2
+# }
+
 # resource "aws_autoscaling_group" "ecs_1" {
 #   name = "${var.app_ident}-ecs-asg"
-#   desired_capacity     = locals.min_num_servers
-#   min_size             = locals.min_num_servers
-#   max_size             = locals.max_num_servers
-#   vpc_zone_identifier  = locals.subnet_ids
+#   desired_capacity     = local.min_num_servers
+#   min_size             = local.min_num_servers
+#   max_size             = local.max_num_servers
+#   vpc_zone_identifier  = local.subnet_ids
 #   protect_from_scale_in = false
 
 #   launch_template {
@@ -53,9 +58,9 @@
 
 # resource "aws_launch_template" "launch_template_1" {
 #   name          = "${var.app_ident}-ecs-lt"
-#   image_id      = "ami-011a10ed71194b358"
-#   instance_type = locals.ec2_instance_type
-#   key_name      = locals.ec2_key_name
+#   image_id      = data.aws_ssm_parameter.ecs_optimized_ami.value
+#   instance_type = local.ec2_instance_type
+#   key_name      = local.ec2_key_name
 
 #   iam_instance_profile {
 #     name = aws_iam_instance_profile.ecs_1.name
@@ -72,6 +77,21 @@
 #   )
 
 #   vpc_security_group_ids = [aws_security_group.ecs_lt_sg_1.id]
+# }
+
+# data "aws_ssm_parameter" "ecs_optimized_ami" {
+#   name = "/aws/service/ecs/optimized-ami/amazon-linux-2/recommended/image_id"
+# }
+
+# resource "aws_key_pair" "generated_key" {
+#   count      = var.ec2_key_name == "" ? 1 : 0
+#   key_name   = "${var.app_ident}-generated-key"
+#   public_key = tls_private_key.generated_key.public_key_openssh
+# }
+
+# resource "tls_private_key" "generated_key" {
+#   algorithm = "RSA"
+#   rsa_bits  = 2048
 # }
 
 # resource "aws_iam_instance_profile" "ecs_1" {
@@ -115,7 +135,7 @@
 #   name = "${var.app_ident}-ecs-cp-1"
 
 #   auto_scaling_group_provider {
-#     auto_scaling_group_arn         = aws_autoscaling_group.ecs.arn
+#     auto_scaling_group_arn         = aws_autoscaling_group.ecs_1.arn
 #     managed_termination_protection = "DISABLED"  # Ensure this does not conflict with desired capacity
 
 #     managed_scaling {
