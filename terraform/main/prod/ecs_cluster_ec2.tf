@@ -1,39 +1,29 @@
-# resource "aws_ecs_account_setting_default" "container_insights" {
-#   name  = "containerInsights"
-#   value = "enhanced"
-# }
-
-# resource "aws_ecs_cluster" "ecs_cluster_1" {
-#   name = "${var.app_ident}-ecs-cluster-1"
-
-#   setting {
-#     name  = "containerInsights"
-#     value = "enhanced"
-#   }
-# }
-
-# output "ecs_cluster_1" {
-#   value = aws_ecs_cluster.ecs_cluster_1.id
-# }
-
-# #############################################################################################
-# # Enable the below resources if you want EC2 Capacity in addition to Fargate
-# #############################################################################################
-
 # variable "ec2_key_name" {
 #   description = "The name of the EC2 key pair to use. If not specified, a new key pair will be created."
 #   default     = ""
 # }
 
 # locals {
-#   # (Optional) Config for EC2 Capacity
-#   # NOTE: You only need these if you are enabling the allocation of EC2 servers to your cluster
-#   #       if you don't do that you can still use Fargate
-#   ec2_instance_type = "t3.large"
-#   ec2_key_name      = var.ec2_key_name != "" ? var.ec2_key_name : aws_key_pair.generated_key[0].key_name
-#   subnet_ids        = var.private_subnet_ids  # or var.public_subnet_ids
+#   # If you do not want any EC2 capacity just set these both to 0
 #   min_num_servers   = 1
-#   max_num_servers   = 2
+#   max_num_servers   = 1
+
+#   subnet_ids        = var.public_subnet_ids  # var.private_subnet_ids or var.public_subnet_ids
+#   ec2_instance_type = "t4g.large" # or any other kind you like... t3.large, etc...
+#   ec2_key_name      = var.ec2_key_name != "" ? var.ec2_key_name : aws_key_pair.generated_key[0].key_name
+# }
+
+# resource "aws_ecs_cluster" "ecs_cluster_ec2_1" {
+#   name = "${var.app_ident}-ec2-ecs-cluster-1"
+
+#   setting {
+#     name  = "containerInsights"
+#     value = "enabled" # enabled or enhanced
+#   }
+# }
+
+# output "ecs_cluster_ec2_1" {
+#   value = aws_ecs_cluster.ecs_cluster_ec2_1.id
 # }
 
 # resource "aws_autoscaling_group" "ecs_1" {
@@ -42,7 +32,8 @@
 #   min_size             = local.min_num_servers
 #   max_size             = local.max_num_servers
 #   vpc_zone_identifier  = local.subnet_ids
-#   protect_from_scale_in = false
+#   protect_from_scale_in  = true  # Protect instances from being scaled in
+#   default_cooldown = 60
 
 #   launch_template {
 #     id      = aws_launch_template.launch_template_1.id
@@ -51,7 +42,7 @@
 
 #   tag {
 #     key                 = "Name"
-#     value               = "ECS - ${aws_ecs_cluster.ecs_cluster_1.name}"
+#     value               = "ECS - ${aws_ecs_cluster.ecs_cluster_ec2_1.name}"
 #     propagate_at_launch = true
 #   }
 # }
@@ -72,7 +63,7 @@
 
 #   user_data = base64encode(<<-EOF
 #               #!/bin/bash
-#               echo ECS_CLUSTER=${aws_ecs_cluster.ecs_cluster_1.name} >> /etc/ecs/ecs.config
+#               echo ECS_CLUSTER=${aws_ecs_cluster.ecs_cluster_ec2_1.name} >> /etc/ecs/ecs.config
 #               EOF
 #   )
 
@@ -119,16 +110,9 @@
 #   }
 # }
 
-# resource "aws_ecs_cluster_capacity_providers" "ecs_cluster_1_cp_1" {
-#   cluster_name = aws_ecs_cluster.ecs_cluster_1.name
-
+# resource "aws_ecs_cluster_capacity_providers" "ec2_ecs_cluster_1_cp" {
+#   cluster_name       = aws_ecs_cluster.ecs_cluster_ec2_1.name
 #   capacity_providers = [aws_ecs_capacity_provider.ecs_cp_1.name]
-
-#   default_capacity_provider_strategy {
-#     capacity_provider = aws_ecs_capacity_provider.ecs_cp_1.name
-#     weight            = 1
-#     base              = 1
-#   }
 # }
 
 # resource "aws_ecs_capacity_provider" "ecs_cp_1" {
@@ -136,13 +120,13 @@
 
 #   auto_scaling_group_provider {
 #     auto_scaling_group_arn         = aws_autoscaling_group.ecs_1.arn
-#     managed_termination_protection = "DISABLED"  # Ensure this does not conflict with desired capacity
+#     managed_termination_protection = "ENABLED"
 
 #     managed_scaling {
-#       status            = "ENABLED"
-#       target_capacity   = 70
+#       status                  = "ENABLED"
+#       target_capacity         = 100 # Ensure full utilization of ASG capacity
 #       minimum_scaling_step_size = 1
-#       maximum_scaling_step_size = 10
+#       maximum_scaling_step_size = 1 # Prevent large, unexpected scaling steps
 #     }
 #   }
 # }

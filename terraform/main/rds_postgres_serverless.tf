@@ -1,5 +1,5 @@
 # locals {
-#   database_name = "<my database name>"
+#   database_name = "testdb"
 #   publicly_accessible = true
 #   subnet_ids = data.aws_subnets.public.ids
 #   skip_final_snapshot = false
