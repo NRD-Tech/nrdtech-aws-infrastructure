@@ -15,3 +15,8 @@ variable "app_ident_without_env" {
 variable "environment" {
   type        = string
 }
+
+variable "ecs_ec2_cpu_architecture" {
+  type = string
+  description = "ARM64 or X86_64"
+}

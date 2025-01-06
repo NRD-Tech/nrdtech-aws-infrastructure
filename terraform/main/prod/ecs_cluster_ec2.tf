@@ -9,7 +9,7 @@
 #   max_num_servers   = 1
 
 #   subnet_ids        = var.public_subnet_ids  # var.private_subnet_ids or var.public_subnet_ids
-#   ec2_instance_type = "t4g.large" # or any other kind you like... t3.large, etc...
+#   ec2_instance_type = var.ecs_ec2_cpu_architecture == "X86_64" ? "t3.large" : "t4g.large"
 #   ec2_key_name      = var.ec2_key_name != "" ? var.ec2_key_name : aws_key_pair.generated_key[0].key_name
 # }
 
@@ -49,7 +49,8 @@
 
 # resource "aws_launch_template" "launch_template_1" {
 #   name          = "${var.app_ident}-ecs-lt"
-#   image_id      = data.aws_ssm_parameter.ecs_optimized_ami.value
+#   image_id      = var.ecs_ec2_cpu_architecture == "X86_64" ? data.aws_ssm_parameter.ecs_optimized_ami.value : data.aws_ssm_parameter.ecs_optimized_ami_arm64.value
+  
 #   instance_type = local.ec2_instance_type
 #   key_name      = local.ec2_key_name
 
@@ -72,6 +73,10 @@
 
 # data "aws_ssm_parameter" "ecs_optimized_ami" {
 #   name = "/aws/service/ecs/optimized-ami/amazon-linux-2/recommended/image_id"
+# }
+
+# data "aws_ssm_parameter" "ecs_optimized_ami_arm64" {
+#   name = "/aws/service/ecs/optimized-ami/amazon-linux-2/arm64/recommended/image_id"
 # }
 
 # resource "aws_key_pair" "generated_key" {

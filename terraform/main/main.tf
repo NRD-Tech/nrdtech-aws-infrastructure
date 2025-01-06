@@ -30,6 +30,7 @@ module "prod_resources" {
   private_subnet_ids = data.aws_subnets.private.ids
   public_subnet_ids = data.aws_subnets.public.ids
   app_ident = var.app_ident
+  ecs_ec2_cpu_architecture = var.ecs_ec2_cpu_architecture
 
   providers = {
     aws         = aws        # Default provider
