@@ -22,7 +22,7 @@
 #   }
 
 #   vpc_options {
-#     subnet_ids         = [var.PRIVATE_SUBNET_IDS[0], var.PRIVATE_SUBNET_IDS[1]]
+#     subnet_ids         = [data.aws_subnets.private.ids[0], data.aws_subnets.private.ids[1]]
 #     security_group_ids = [aws_security_group.opensearch_sg.id]
 #   }
 
