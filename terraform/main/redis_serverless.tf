@@ -13,7 +13,7 @@
 #   }
 
 #   security_group_ids = [aws_security_group.redis_sg_1.id]
-#   subnet_ids         = slice(data.aws_subnets.all.ids, 0, 3)
+#   subnet_ids         = slice(data.aws_subnets.private.ids, 0, 3)
 # }
 
 # resource "aws_security_group" "redis_sg_1" {
