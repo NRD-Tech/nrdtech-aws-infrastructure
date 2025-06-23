@@ -1,5 +1,5 @@
 # resource "aws_elasticache_serverless_cache" "redis_1" {
-#   engine = "redis"
+#   engine = "valkey"
 #   major_engine_version = "7"
 #   name   = "${var.app_ident}-redis-1"
 #   cache_usage_limits {
