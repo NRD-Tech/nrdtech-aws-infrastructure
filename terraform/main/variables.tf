@@ -1,22 +1,22 @@
-variable "aws_region" {
+variable "AWS_REGION" {
   type = string
 }
 
-variable "app_ident" {
+variable "APP_IDENT" {
   description = "Identifier of the application"
   type        = string
 }
 
-variable "app_ident_without_env" {
+variable "APP_IDENT_WITHOUT_ENV" {
     description = "Identifier of the application that doesn't include the environment"
     type = string
 }
 
-variable "environment" {
+variable "ENVIRONMENT" {
   type        = string
 }
 
-variable "ecs_ec2_cpu_architecture" {
+variable "ECS_EC2_CPU_ARCHITECTURE" {
   type = string
   description = "ARM64 or X86_64"
 }
