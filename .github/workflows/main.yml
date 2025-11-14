@@ -1,40 +1,58 @@
-name: Terraform Deployment
+name: GitHub Flow Deployment
 
 on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
     inputs:
       environment:
-        description: "Specify the environment (staging or production)"
+        description: 'Environment to deploy to'
         required: true
-        default: "staging"
-        type: string
-      action:
-        description: "Specify the action (deploy or un-deploy)"
-        required: true
-        default: "deploy"
-        type: string
-  push:
-    branches:
-      - production
-      - staging
+        default: 'staging'
+        type: choice
+        options:
+        - staging
+        - production
 
+# env:
+  # RDS_MASTER_PASSWORD_STAGING: ${{ secrets.RDS_MASTER_PASSWORD_STAGING }}
+  # RDS_MASTER_PASSWORD_PROD: ${{ secrets.RDS_MASTER_PASSWORD_PROD }}
 
 jobs:
-  deploy:
+  plan-bootstrap-staging:
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/staging' || github.ref == 'refs/heads/production' || github.event.inputs.action == 'deploy'
+    if: github.ref == 'refs/heads/main'
     permissions:
       id-token: write
       contents: read
+      issues: write
+      pull-requests: write
+    env:
+      ENVIRONMENT: staging
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
 
+      - name: Load configuration
+        id: config
+        run: |
+          source ./prepare_environment.sh
+          echo "Debug: AWS_ROLE_ARN=$AWS_ROLE_ARN"
+          echo "Debug: AWS_DEFAULT_REGION=$AWS_DEFAULT_REGION"
+          echo "aws-role-arn=$AWS_ROLE_ARN" >> $GITHUB_OUTPUT
+          echo "aws-region=$AWS_DEFAULT_REGION" >> $GITHUB_OUTPUT
+
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v3
+        uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::1234567890:role/pipelines-cd-abc123
-          aws-region: us-west-2
+          role-to-assume: ${{ steps.config.outputs.aws-role-arn }}
+          aws-region: ${{ steps.config.outputs.aws-region }}
 
       - name: Install Terraform
         uses: hashicorp/setup-terraform@v2
@@ -44,21 +62,613 @@ jobs:
       - name: Docker Setup Buildx
         uses: docker/setup-buildx-action@v2.0.0
 
-      - name: Deploy or Un-deploy
+      - name: Generate Bootstrap Terraform Plan
         run: |
-          if [[ "${{ github.ref }}" == "refs/heads/staging" ]]; then
-            if [[ "${{ github.event.inputs.action }}" == "un-deploy" ]]; then
-              ENVIRONMENT=staging bash ./deploy.sh -d
+          source ./prepare_environment.sh
+          source ./generate_terraform_backend.sh
+          cd terraform/bootstrap
+          terraform init
+          terraform plan -out=bootstrap-plan.out
+          terraform show -no-color bootstrap-plan.out > bootstrap-plan.txt
+
+      - name: Upload Bootstrap Plan Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-bootstrap-plan-staging
+          path: terraform/bootstrap/bootstrap-plan.out
+
+      - name: Read Plan Output
+        id: read-plan
+        run: |
+          if [ -f "terraform/bootstrap/bootstrap-plan.txt" ]; then
+            PLAN_OUTPUT=$(cat terraform/bootstrap/bootstrap-plan.txt)
+            echo "plan_output<<EOF" >> $GITHUB_OUTPUT
+            echo "$PLAN_OUTPUT" >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
+            
+            # Check if plan has changes
+            if echo "$PLAN_OUTPUT" | grep -q "Plan: 0 to add, 0 to change, 0 to destroy"; then
+              echo "has_changes=false" >> $GITHUB_OUTPUT
+              echo "No changes detected in bootstrap plan - skipping approval"
+            elif echo "$PLAN_OUTPUT" | grep -q "No changes. Your infrastructure matches the configuration."; then
+              echo "has_changes=false" >> $GITHUB_OUTPUT
+              echo "No changes detected in bootstrap plan - skipping approval"
             else
-              ENVIRONMENT=staging bash ./deploy.sh
-            fi
-          elif [[ "${{ github.ref }}" == "refs/heads/production" ]]; then
-            if [[ "${{ github.event.inputs.action }}" == "un-deploy" ]]; then
-              ENVIRONMENT=prod bash ./deploy.sh -d
-            else
-              ENVIRONMENT=prod bash ./deploy.sh
+              echo "has_changes=true" >> $GITHUB_OUTPUT
+              echo "Changes detected in bootstrap plan - approval required"
             fi
           else
-            echo "Invalid branch for deployment: ${{ github.ref }}"
-            exit 1
+            echo "plan_output=Plan file not found" >> $GITHUB_OUTPUT
+            echo "has_changes=true" >> $GITHUB_OUTPUT
           fi
+
+      - name: Manual Approval Required
+        if: github.event_name != 'workflow_dispatch' && steps.read-plan.outputs.has_changes == 'true'
+        uses: trstringer/manual-approval@v1
+        with:
+          secret: ${{ secrets.GITHUB_TOKEN }}
+          approvers: ${{ github.actor }}
+          minimum-approvals: 1
+          issue-title: "🚀 [STAGING] Bootstrap Deployment Approval Required"
+          issue-body: |
+            ## Bootstrap Deployment Approval Required
+            
+            **Environment:** Staging  
+            **Commit:** ${{ github.sha }}  
+            **Actor:** @${{ github.actor }}  
+            
+            ### 📋 Terraform Plan Output
+            
+            ```hcl
+            ${{ steps.read-plan.outputs.plan_output }}
+            ```
+            
+            Please review the plan above and approve or deny this deployment.
+
+      - name: No Changes Detected
+        if: steps.read-plan.outputs.has_changes == 'false'
+        run: |
+          echo "✅ No changes detected in bootstrap plan - skipping deployment approval"
+
+      - name: Comment Plan on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const fs = require('fs');
+            const bootstrapPlan = fs.readFileSync('terraform/bootstrap/bootstrap-plan.txt', 'utf8');
+            const output = `## Terraform Bootstrap Plan for Staging
+            
+            <details>
+            <summary>Show Bootstrap Plan</summary>
+            
+            \`\`\`
+            ${bootstrapPlan}
+            \`\`\`
+            </details>`;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: output
+            });
+
+  deploy-bootstrap-staging:
+    needs: plan-bootstrap-staging
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'staging')
+    environment: staging
+    permissions:
+      id-token: write
+      contents: read
+    env:
+      ENVIRONMENT: staging
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Load configuration
+        id: config
+        run: |
+          source ./prepare_environment.sh
+          echo "Debug: AWS_ROLE_ARN=$AWS_ROLE_ARN"
+          echo "Debug: AWS_DEFAULT_REGION=$AWS_DEFAULT_REGION"
+          echo "Debug: GITHUB_REPOSITORY=$GITHUB_REPOSITORY"
+          echo "Debug: GITHUB_REF=$GITHUB_REF"
+          echo "aws-role-arn=$AWS_ROLE_ARN" >> $GITHUB_OUTPUT
+          echo "aws-region=$AWS_DEFAULT_REGION" >> $GITHUB_OUTPUT
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ steps.config.outputs.aws-role-arn }}
+          aws-region: ${{ steps.config.outputs.aws-region }}
+
+      - name: Install Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.10.3
+
+      - name: Docker Setup Buildx
+        uses: docker/setup-buildx-action@v2.0.0
+
+      - name: Download Bootstrap Plan Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: terraform-bootstrap-plan-staging
+          path: terraform/bootstrap/
+
+      - name: Apply Bootstrap Terraform Plan
+        run: |
+          source ./prepare_environment.sh
+          source ./generate_terraform_backend.sh
+          cd terraform/bootstrap
+          terraform init
+          terraform apply bootstrap-plan.out
+
+  plan-main-staging:
+    needs: deploy-bootstrap-staging
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    environment: staging
+    permissions:
+      id-token: write
+      contents: read
+      issues: write
+      pull-requests: write
+    env:
+      ENVIRONMENT: staging
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Load configuration
+        id: config
+        run: |
+          source ./prepare_environment.sh
+          echo "Debug: AWS_ROLE_ARN=$AWS_ROLE_ARN"
+          echo "Debug: AWS_DEFAULT_REGION=$AWS_DEFAULT_REGION"
+          echo "aws-role-arn=$AWS_ROLE_ARN" >> $GITHUB_OUTPUT
+          echo "aws-region=$AWS_DEFAULT_REGION" >> $GITHUB_OUTPUT
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ steps.config.outputs.aws-role-arn }}
+          aws-region: ${{ steps.config.outputs.aws-region }}
+
+      - name: Install Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.10.3
+
+      - name: Generate Main Terraform Plan
+        run: |
+          source ./prepare_environment.sh
+          source ./generate_terraform_backend.sh
+          cd terraform/main
+          terraform init
+          terraform plan -out=main-plan.out
+          terraform show -no-color main-plan.out > main-plan.txt
+
+      - name: Upload Main Plan Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-main-plan-staging
+          path: terraform/main/main-plan.out
+
+      - name: Read Plan Output
+        id: read-plan
+        run: |
+          if [ -f "terraform/main/main-plan.txt" ]; then
+            PLAN_OUTPUT=$(cat terraform/main/main-plan.txt)
+            echo "plan_output<<EOF" >> $GITHUB_OUTPUT
+            echo "$PLAN_OUTPUT" >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
+            
+            # Check if plan has changes
+            if echo "$PLAN_OUTPUT" | grep -q "Plan: 0 to add, 0 to change, 0 to destroy"; then
+              echo "has_changes=false" >> $GITHUB_OUTPUT
+              echo "No changes detected in main plan - skipping approval"
+            elif echo "$PLAN_OUTPUT" | grep -q "No changes. Your infrastructure matches the configuration."; then
+              echo "has_changes=false" >> $GITHUB_OUTPUT
+              echo "No changes detected in main plan - skipping approval"
+            else
+              echo "has_changes=true" >> $GITHUB_OUTPUT
+              echo "Changes detected in main plan - approval required"
+            fi
+          else
+            echo "plan_output=Plan file not found" >> $GITHUB_OUTPUT
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Manual Approval Required
+        if: github.event_name != 'workflow_dispatch' && steps.read-plan.outputs.has_changes == 'true'
+        uses: trstringer/manual-approval@v1
+        with:
+          secret: ${{ secrets.GITHUB_TOKEN }}
+          approvers: ${{ github.actor }}
+          minimum-approvals: 1
+          issue-title: "🚀 [STAGING] Main Deployment Approval Required"
+          issue-body: |
+            ## Main Deployment Approval Required
+            
+            **Environment:** Staging  
+            **Commit:** ${{ github.sha }}  
+            **Actor:** @${{ github.actor }}  
+            
+            ### 📋 Terraform Plan Output
+            
+            ```hcl
+            ${{ steps.read-plan.outputs.plan_output }}
+            ```
+            
+            Please review the plan above and approve or deny this deployment.
+
+      - name: No Changes Detected
+        if: steps.read-plan.outputs.has_changes == 'false'
+        run: |
+          echo "✅ No changes detected in main plan - skipping deployment approval"
+
+  deploy-main-staging:
+    needs: plan-main-staging
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'staging')
+    environment: staging
+    permissions:
+      id-token: write
+      contents: read
+    env:
+      ENVIRONMENT: staging
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Load configuration
+        id: config
+        run: |
+          source ./prepare_environment.sh
+          echo "Debug: AWS_ROLE_ARN=$AWS_ROLE_ARN"
+          echo "Debug: AWS_DEFAULT_REGION=$AWS_DEFAULT_REGION"
+          echo "aws-role-arn=$AWS_ROLE_ARN" >> $GITHUB_OUTPUT
+          echo "aws-region=$AWS_DEFAULT_REGION" >> $GITHUB_OUTPUT
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ steps.config.outputs.aws-role-arn }}
+          aws-region: ${{ steps.config.outputs.aws-region }}
+
+      - name: Install Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.10.3
+
+      - name: Docker Setup Buildx
+        uses: docker/setup-buildx-action@v2.0.0
+
+      - name: Download Main Plan Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: terraform-main-plan-staging
+          path: terraform/main/
+
+      - name: Apply Main Terraform Plan
+        run: |
+          source ./prepare_environment.sh
+          source ./generate_terraform_backend.sh
+          cd terraform/main
+          terraform init
+          terraform apply main-plan.out
+
+  plan-bootstrap-production:
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      id-token: write
+      contents: read
+      issues: write
+      pull-requests: write
+    env:
+      ENVIRONMENT: prod
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Load configuration
+        id: config
+        run: |
+          source ./prepare_environment.sh
+          echo "Debug: AWS_DEFAULT_REGION=$AWS_DEFAULT_REGION"
+          echo "Debug: AWS_REGION=$AWS_REGION"
+          echo "aws-role-arn=$AWS_ROLE_ARN" >> $GITHUB_OUTPUT
+          echo "aws-region=$AWS_DEFAULT_REGION" >> $GITHUB_OUTPUT
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ steps.config.outputs.aws-role-arn }}
+          aws-region: ${{ steps.config.outputs.aws-region }}
+
+      - name: Install Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.10.3
+
+      - name: Docker Setup Buildx
+        uses: docker/setup-buildx-action@v2.0.0
+
+      - name: Generate Bootstrap Terraform Plan
+        run: |
+          source ./prepare_environment.sh
+          source ./generate_terraform_backend.sh
+          cd terraform/bootstrap
+          terraform init
+          terraform plan -out=bootstrap-plan.out
+          terraform show -no-color bootstrap-plan.out > bootstrap-plan.txt
+
+      - name: Upload Bootstrap Plan Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-bootstrap-plan-production
+          path: terraform/bootstrap/bootstrap-plan.out
+
+      - name: Read Plan Output
+        id: read-plan
+        run: |
+          if [ -f "terraform/bootstrap/bootstrap-plan.txt" ]; then
+            PLAN_OUTPUT=$(cat terraform/bootstrap/bootstrap-plan.txt)
+            echo "plan_output<<EOF" >> $GITHUB_OUTPUT
+            echo "$PLAN_OUTPUT" >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
+            
+            # Check if plan has changes
+            if echo "$PLAN_OUTPUT" | grep -q "Plan: 0 to add, 0 to change, 0 to destroy"; then
+              echo "has_changes=false" >> $GITHUB_OUTPUT
+              echo "No changes detected in bootstrap plan - skipping approval"
+            elif echo "$PLAN_OUTPUT" | grep -q "No changes. Your infrastructure matches the configuration."; then
+              echo "has_changes=false" >> $GITHUB_OUTPUT
+              echo "No changes detected in bootstrap plan - skipping approval"
+            else
+              echo "has_changes=true" >> $GITHUB_OUTPUT
+              echo "Changes detected in bootstrap plan - approval required"
+            fi
+          else
+            echo "plan_output=Plan file not found" >> $GITHUB_OUTPUT
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Manual Approval Required
+        if: github.event_name != 'workflow_dispatch' && steps.read-plan.outputs.has_changes == 'true'
+        uses: trstringer/manual-approval@v1
+        with:
+          secret: ${{ secrets.GITHUB_TOKEN }}
+          approvers: ${{ github.actor }}
+          minimum-approvals: 1
+          issue-title: "🚀 [PRODUCTION] Bootstrap Deployment Approval Required"
+          issue-body: |
+            ## Bootstrap Deployment Approval Required
+            
+            **Environment:** Production  
+            **Commit:** ${{ github.sha }}  
+            **Actor:** @${{ github.actor }}  
+            
+            ### 📋 Terraform Plan Output
+            
+            ```hcl
+            ${{ steps.read-plan.outputs.plan_output }}
+            ```
+            
+            Please review the plan above and approve or deny this deployment.
+
+      - name: No Changes Detected
+        if: steps.read-plan.outputs.has_changes == 'false'
+        run: |
+          echo "✅ No changes detected in bootstrap plan - skipping deployment approval"
+
+  deploy-bootstrap-production:
+    needs: plan-bootstrap-production
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'production')
+    environment: prod
+    permissions:
+      id-token: write
+      contents: read
+    env:
+      ENVIRONMENT: prod
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Load configuration
+        id: config
+        run: |
+          source ./prepare_environment.sh
+          echo "Debug: AWS_ROLE_ARN=$AWS_ROLE_ARN"
+          echo "Debug: AWS_DEFAULT_REGION=$AWS_DEFAULT_REGION"
+          echo "aws-role-arn=$AWS_ROLE_ARN" >> $GITHUB_OUTPUT
+          echo "aws-region=$AWS_DEFAULT_REGION" >> $GITHUB_OUTPUT
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ steps.config.outputs.aws-role-arn }}
+          aws-region: ${{ steps.config.outputs.aws-region }}
+
+      - name: Install Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.10.3
+
+      - name: Docker Setup Buildx
+        uses: docker/setup-buildx-action@v2.0.0
+
+      - name: Download Bootstrap Plan Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: terraform-bootstrap-plan-production
+          path: terraform/bootstrap/
+
+      - name: Apply Bootstrap Terraform Plan
+        run: |
+          source ./prepare_environment.sh
+          source ./generate_terraform_backend.sh
+          cd terraform/bootstrap
+          terraform init
+          terraform apply bootstrap-plan.out
+
+  plan-main-production:
+    needs: deploy-bootstrap-production
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    environment: prod
+    permissions:
+      id-token: write
+      contents: read
+      issues: write
+      pull-requests: write
+    env:
+      ENVIRONMENT: prod
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Load configuration
+        id: config
+        run: |
+          source ./prepare_environment.sh
+          echo "Debug: AWS_ROLE_ARN=$AWS_ROLE_ARN"
+          echo "Debug: AWS_DEFAULT_REGION=$AWS_DEFAULT_REGION"
+          echo "aws-role-arn=$AWS_ROLE_ARN" >> $GITHUB_OUTPUT
+          echo "aws-region=$AWS_DEFAULT_REGION" >> $GITHUB_OUTPUT
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ steps.config.outputs.aws-role-arn }}
+          aws-region: ${{ steps.config.outputs.aws-region }}
+
+      - name: Install Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.10.3
+
+      - name: Generate Main Terraform Plan
+        run: |
+          source ./prepare_environment.sh
+          source ./generate_terraform_backend.sh
+          cd terraform/main
+          terraform init
+          terraform plan -out=main-plan.out
+          terraform show -no-color main-plan.out > main-plan.txt
+
+      - name: Upload Main Plan Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-main-plan-production
+          path: terraform/main/main-plan.out
+
+      - name: Read Plan Output
+        id: read-plan
+        run: |
+          if [ -f "terraform/main/main-plan.txt" ]; then
+            PLAN_OUTPUT=$(cat terraform/main/main-plan.txt)
+            echo "plan_output<<EOF" >> $GITHUB_OUTPUT
+            echo "$PLAN_OUTPUT" >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
+            
+            # Check if plan has changes
+            if echo "$PLAN_OUTPUT" | grep -q "Plan: 0 to add, 0 to change, 0 to destroy"; then
+              echo "has_changes=false" >> $GITHUB_OUTPUT
+              echo "No changes detected in main plan - skipping approval"
+            elif echo "$PLAN_OUTPUT" | grep -q "No changes. Your infrastructure matches the configuration."; then
+              echo "has_changes=false" >> $GITHUB_OUTPUT
+              echo "No changes detected in main plan - skipping approval"
+            else
+              echo "has_changes=true" >> $GITHUB_OUTPUT
+              echo "Changes detected in main plan - approval required"
+            fi
+          else
+            echo "plan_output=Plan file not found" >> $GITHUB_OUTPUT
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Manual Approval Required
+        if: github.event_name != 'workflow_dispatch' && steps.read-plan.outputs.has_changes == 'true'
+        uses: trstringer/manual-approval@v1
+        with:
+          secret: ${{ secrets.GITHUB_TOKEN }}
+          approvers: ${{ github.actor }}
+          minimum-approvals: 1
+          issue-title: "🚀 [PRODUCTION] Main Deployment Approval Required"
+          issue-body: |
+            ## Main Deployment Approval Required
+            
+            **Environment:** Production  
+            **Commit:** ${{ github.sha }}  
+            **Actor:** @${{ github.actor }}  
+            
+            ### 📋 Terraform Plan Output
+            
+            ```hcl
+            ${{ steps.read-plan.outputs.plan_output }}
+            ```
+            
+            Please review the plan above and approve or deny this deployment.
+
+      - name: No Changes Detected
+        if: steps.read-plan.outputs.has_changes == 'false'
+        run: |
+          echo "✅ No changes detected in main plan - skipping deployment approval"
+          
+  deploy-main-production:
+    needs: plan-main-production
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'production')
+    environment: prod
+    permissions:
+      id-token: write
+      contents: read
+    env:
+      ENVIRONMENT: prod
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Load configuration
+        id: config
+        run: |
+          source ./prepare_environment.sh
+          echo "Debug: AWS_ROLE_ARN=$AWS_ROLE_ARN"
+          echo "Debug: AWS_DEFAULT_REGION=$AWS_DEFAULT_REGION"
+          echo "aws-role-arn=$AWS_ROLE_ARN" >> $GITHUB_OUTPUT
+          echo "aws-region=$AWS_DEFAULT_REGION" >> $GITHUB_OUTPUT
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ steps.config.outputs.aws-role-arn }}
+          aws-region: ${{ steps.config.outputs.aws-region }}
+
+      - name: Install Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.10.3
+
+      - name: Docker Setup Buildx
+        uses: docker/setup-buildx-action@v2.0.0
+
+      - name: Download Main Plan Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: terraform-main-plan-production
+          path: terraform/main/
+
+      - name: Apply Main Terraform Plan
+        run: |
+          source ./prepare_environment.sh
+          source ./generate_terraform_backend.sh
+          cd terraform/main
+          terraform init
+          terraform apply main-plan.out

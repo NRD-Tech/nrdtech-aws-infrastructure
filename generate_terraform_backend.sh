@@ -1,5 +1,8 @@
 # NOTE: Do not call this directly - it is called from ./deploy.sh
 
+# Store the original directory
+ORIGINAL_DIR=$(pwd)
+
 #########################################################
 # Generate the backend.tf file for app_bootstrap
 #########################################################
@@ -17,23 +20,13 @@ terraform {
 }
 EOF
 
-#########################################################
-# Run App Bootstrap Terraform
-#########################################################
-
-# Initialize terraform
-terraform init
-
-echo "Creating resources..."
-terraform apply -auto-approve
-
-cd ../../
+echo "Generated backend.tf file for app_bootstrap"
 
 #########################################################
 # Generate the backend.tf file for main
 #########################################################
 
-cd terraform/main
+cd "$ORIGINAL_DIR/terraform/main"
 rm -fR .terraform
 rm -fR .terraform.lock.hcl
 cat > backend.tf << EOF
@@ -45,6 +38,7 @@ terraform {
   }
 }
 EOF
+echo "Generated backend.tf file for main"
 
 cat > app_bootstrap.tf << EOF
 data "terraform_remote_state" "app_bootstrap" {
@@ -56,6 +50,7 @@ data "terraform_remote_state" "app_bootstrap" {
   }
 }
 EOF
+echo "Generated app_bootstrap.tf file"
 
 #########################################################
 # Generate the remote_backend.tf file for access
@@ -72,13 +67,7 @@ EOF
 #   }
 # }
 #EOF
+#echo "Generated remote_backend.tf file"
 
-#########################################################
-# Run Terraform
-#########################################################
-
-# Initialize terraform
-terraform init
-
-echo "Creating resources..."
-terraform apply -auto-approve
+# Return to original directory
+cd "$ORIGINAL_DIR"
