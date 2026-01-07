@@ -5,7 +5,7 @@
 #   skip_final_snapshot = false
 # }
 
-# variable "rds_postgres_serverless_master_password" {
+# variable "RDS_MASTER_PASSWORD" {
 #     type = string
 # }
 
@@ -18,7 +18,7 @@
 #   vpc_security_group_ids  = [aws_security_group.aurora_sg_1.id]
 #   database_name           = local.database_name
 #   master_username         = "dbadmin"
-#   master_password         = var.rds_postgres_serverless_master_password
+#   master_password         = var.RDS_MASTER_PASSWORD
 #   db_subnet_group_name    = aws_db_subnet_group.aurora_subnet_group_1.name
 #   skip_final_snapshot     = local.skip_final_snapshot
 #   final_snapshot_identifier = local.skip_final_snapshot ? null : "${var.app_ident}-final-snapshot"
