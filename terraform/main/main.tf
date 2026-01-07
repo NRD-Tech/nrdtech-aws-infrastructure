@@ -47,7 +47,7 @@ data "aws_caller_identity" "current" {}
 
 # CUSTOM VPC
 locals {
-  vpc_name = "dmlaw-standard-vpc"
+  vpc_name = "mycompany-standard-vpc"
 }
 data "aws_vpc" "selected" {
   filter {

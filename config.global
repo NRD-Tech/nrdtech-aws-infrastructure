@@ -4,6 +4,8 @@
 # Used to identify the application in AWS resources | allowed characters: a-zA-Z0-9-_
 # NOTE: The app name cannot start with "aws" -- AWS doesn't allow this
 export APP_IDENT_WITHOUT_ENV=shared-infra
+export APP_IDENT="${APP_IDENT_WITHOUT_ENV}-${ENVIRONMENT}"
+export TERRAFORM_STATE_IDENT=$APP_IDENT
 
 # This is the AWS S3 bucket in which you are storing your terraform state files
 # - This must exist before deploying
